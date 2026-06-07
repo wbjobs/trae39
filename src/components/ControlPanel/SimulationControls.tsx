@@ -1,9 +1,13 @@
-import { useState } from 'react';
-import { Play, Pause, RotateCcw, Gauge, ChevronDown, ChevronUp } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Play, Pause, RotateCcw, Gauge, ChevronDown, ChevronUp, Cpu, Zap, Activity } from 'lucide-react';
 import { useSimulationStore } from '../../store/useSimulationStore';
+import { usePhysics } from '../../hooks/usePhysics';
+import type { SimulationParams } from '../../types';
 
 export const SimulationControls = () => {
   const [isExpanded, setIsExpanded] = useState(true);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [fps, setFps] = useState(60);
   const {
     simulationState,
     simulationParams,
@@ -12,6 +16,28 @@ export const SimulationControls = () => {
     setSimulationSpeed,
     updateSimulationParams,
   } = useSimulationStore();
+
+  const { isWorkerEnabled, toggleWorker, workerStats, workerInitialized } = usePhysics();
+
+  useEffect(() => {
+    let frameCount = 0;
+    let lastTime = performance.now();
+    let animationId: number;
+
+    const updateFps = () => {
+      frameCount++;
+      const now = performance.now();
+      if (now - lastTime >= 1000) {
+        setFps(Math.round((frameCount * 1000) / (now - lastTime)));
+        frameCount = 0;
+        lastTime = now;
+      }
+      animationId = requestAnimationFrame(updateFps);
+    };
+
+    animationId = requestAnimationFrame(updateFps);
+    return () => cancelAnimationFrame(animationId);
+  }, []);
 
   return (
     <div className="bg-slate-900/80 backdrop-blur-md rounded-xl border border-slate-700/50 overflow-hidden">
@@ -173,7 +199,105 @@ export const SimulationControls = () => {
             </div>
           </div>
 
-          <div className="text-[10px] text-slate-500">
+          <div className="pt-2 border-t border-slate-700/50">
+            <button
+              onClick={() => setShowAdvanced(!showAdvanced)}
+              className="w-full flex items-center justify-between text-xs text-slate-400 hover:text-cyan-400 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <Activity className="w-3 h-3" />
+                <span>性能统计</span>
+              </div>
+              {showAdvanced ? (
+                <ChevronUp className="w-3 h-3" />
+              ) : (
+                <ChevronDown className="w-3 h-3" />
+              )}
+            </button>
+
+            {showAdvanced && (
+              <div className="mt-3 space-y-3">
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="p-2 bg-slate-800/50 rounded-lg">
+                    <div className="flex items-center gap-1 mb-1">
+                      <Activity className="w-3 h-3 text-green-400" />
+                      <span className="text-[10px] text-slate-400">帧率</span>
+                    </div>
+                    <div className={`text-sm font-mono ${fps >= 50 ? 'text-green-400' : fps >= 30 ? 'text-yellow-400' : 'text-red-400'}`}>
+                      {fps} FPS
+                    </div>
+                  </div>
+                  <div className="p-2 bg-slate-800/50 rounded-lg">
+                    <div className="flex items-center gap-1 mb-1">
+                      <Zap className="w-3 h-3 text-cyan-400" />
+                      <span className="text-[10px] text-slate-400">步长时间</span>
+                    </div>
+                    <div className="text-sm font-mono text-cyan-400">
+                      {workerStats.lastStepTime.toFixed(1)} ms
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="p-2 bg-slate-800/50 rounded-lg">
+                    <div className="flex items-center gap-1 mb-1">
+                      <Cpu className="w-3 h-3 text-purple-400" />
+                      <span className="text-[10px] text-slate-400">LJ对数</span>
+                    </div>
+                    <div className="text-sm font-mono text-purple-400">
+                      {workerStats.ljPairCount.toLocaleString()}
+                    </div>
+                  </div>
+                  <div className="p-2 bg-slate-800/50 rounded-lg">
+                    <div className="flex items-center gap-1 mb-1">
+                      <Gauge className="w-3 h-3 text-orange-400" />
+                      <span className="text-[10px] text-slate-400">平均耗时</span>
+                    </div>
+                    <div className="text-sm font-mono text-orange-400">
+                      {workerStats.avgStepTime.toFixed(1)} ms
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-2 bg-slate-800/50 rounded-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <Cpu className="w-3 h-3 text-cyan-400" />
+                      <span className="text-[10px] text-slate-400">Web Worker</span>
+                    </div>
+                    <button
+                      onClick={toggleWorker}
+                      className={`px-2 py-0.5 text-[10px] rounded-full transition-colors ${
+                        isWorkerEnabled
+                          ? 'bg-green-600/30 text-green-400 border border-green-600/50'
+                          : 'bg-slate-700 text-slate-400 border border-slate-600'
+                      }`}
+                    >
+                      {isWorkerEnabled ? '已启用' : '已禁用'}
+                    </button>
+                  </div>
+                  <div className="text-[10px] text-slate-500">
+                    状态: {workerInitialized ? (
+                      <span className="text-green-400">已初始化</span>
+                    ) : (
+                      <span className="text-yellow-400">初始化中...</span>
+                    )}
+                  </div>
+                  <div className="text-[10px] text-slate-500 mt-1">
+                    处理步数: {workerStats.stepsProcessed.toLocaleString()}
+                  </div>
+                </div>
+
+                <div className="text-[9px] text-slate-500 bg-slate-900/50 p-2 rounded-lg">
+                  <p>• 空间哈希: O(N) 复杂度，适用于 100+ 原子</p>
+                  <p>• Web Worker: 物理计算与渲染分离</p>
+                  <p>• 目标: 1000 原子 @ 60 FPS</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="pt-2 mt-2 border-t border-slate-700/50 text-[10px] text-slate-500">
             <div className="flex justify-between">
               <span>模拟时间:</span>
               <span className="text-cyan-400 font-mono">

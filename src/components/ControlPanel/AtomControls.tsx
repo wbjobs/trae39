@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, Trash2, ChevronDown, ChevronUp, Layers } from 'lucide-react';
 import type { ElementType } from '../../types';
 import { ATOM_TYPES, getBondLength } from '../../utils/atomTypes';
 import { useSimulationStore } from '../../store/useSimulationStore';
@@ -7,6 +7,7 @@ import { createAtom, createBond } from '../../utils/initialStructures';
 
 export const AtomControls = () => {
   const [isExpanded, setIsExpanded] = useState(true);
+  const [batchCount, setBatchCount] = useState(100);
   const {
     selectedElementType,
     setSelectedElementType,
@@ -16,6 +17,8 @@ export const AtomControls = () => {
     atoms,
     addBond,
     simulationState,
+    setAtoms,
+    setBonds,
   } = useSimulationStore();
 
   const elements: ElementType[] = ['H', 'O', 'C', 'N'];
@@ -33,6 +36,71 @@ export const AtomControls = () => {
   const handleRemoveSelected = () => {
     if (selectedAtomId) {
       removeAtom(selectedAtomId);
+    }
+  };
+
+  const handleAddBatchAtoms = () => {
+    const newAtoms = [];
+    const range = 8;
+
+    for (let i = 0; i < batchCount; i++) {
+      const randomPos: [number, number, number] = [
+        (Math.random() - 0.5) * range,
+        (Math.random() - 0.5) * range,
+        (Math.random() - 0.5) * range,
+      ];
+      const element = elements[Math.floor(Math.random() * elements.length)];
+      newAtoms.push(createAtom(element, randomPos));
+    }
+
+    setAtoms([...atoms, ...newAtoms]);
+  };
+
+  const handleAddWaterBatch = () => {
+    const newAtoms = [];
+    const newBonds = [];
+    const range = 8;
+    const waterCount = Math.floor(batchCount / 3);
+
+    for (let i = 0; i < waterCount; i++) {
+      const origin: [number, number, number] = [
+        (Math.random() - 0.5) * range,
+        (Math.random() - 0.5) * range,
+        (Math.random() - 0.5) * range,
+      ];
+
+      const [ox, oy, oz] = origin;
+      const oxygen = createAtom('O', [ox, oy, oz], [0, 0, 0]);
+
+      const bondLength = getBondLength('H', 'O');
+      const angle = (104.5 * Math.PI) / 180;
+
+      const h1x = ox + bondLength * Math.sin(angle / 2);
+      const h1y = oy + bondLength * Math.cos(angle / 2);
+      const h1z = oz;
+
+      const h2x = ox - bondLength * Math.sin(angle / 2);
+      const h2y = oy + bondLength * Math.cos(angle / 2);
+      const h2z = oz;
+
+      const hydrogen1 = createAtom('H', [h1x, h1y, h1z], [0, 0, 0]);
+      const hydrogen2 = createAtom('H', [h2x, h2y, h2z], [0, 0, 0]);
+
+      const bond1 = createBond(oxygen.id, hydrogen1.id, bondLength);
+      const bond2 = createBond(oxygen.id, hydrogen2.id, bondLength);
+
+      newAtoms.push(oxygen, hydrogen1, hydrogen2);
+      newBonds.push(bond1, bond2);
+    }
+
+    setAtoms([...atoms, ...newAtoms]);
+    setBonds([...useSimulationStore.getState().bonds, ...newBonds]);
+  };
+
+  const handleClearAll = () => {
+    if (confirm('确定要清除所有原子和化学键吗？')) {
+      setAtoms([]);
+      setBonds([]);
     }
   };
 
@@ -118,6 +186,44 @@ export const AtomControls = () => {
               <Trash2 className="w-4 h-4" />
               删除选中
             </button>
+          </div>
+
+          <div className="space-y-2 pt-2 border-t border-slate-700/50">
+            <div className="flex items-center gap-2">
+              <Layers className="w-3 h-3 text-slate-400" />
+              <label className="text-xs text-slate-400">
+                批量数量: {batchCount}
+              </label>
+            </div>
+            <input
+              type="range"
+              min="10"
+              max="1000"
+              step="10"
+              value={batchCount}
+              onChange={(e) => setBatchCount(parseInt(e.target.value))}
+              className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+            />
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                onClick={handleAddBatchAtoms}
+                className="flex items-center justify-center px-2 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-[10px] font-medium transition-colors"
+              >
+                随机原子
+              </button>
+              <button
+                onClick={handleAddWaterBatch}
+                className="flex items-center justify-center px-2 py-1.5 bg-blue-700 hover:bg-blue-600 text-white rounded-lg text-[10px] font-medium transition-colors"
+              >
+                水分子
+              </button>
+              <button
+                onClick={handleClearAll}
+                className="flex items-center justify-center px-2 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] font-medium transition-colors border border-slate-600/50"
+              >
+                清除全部
+              </button>
+            </div>
           </div>
 
           {selectedAtom && (

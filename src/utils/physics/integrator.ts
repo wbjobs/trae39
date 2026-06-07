@@ -124,7 +124,7 @@ export const calculateTemperature = (
   const kB = 1.380649e-23;
   const degreesOfFreedom = 3 * numAtoms;
   if (degreesOfFreedom === 0) return 0;
-  return (2 * kineticEnergy) / (degreesOfFreedom * kB) * 1e23;
+  return (2 * kineticEnergy) / (degreesOfFreedom * kB);
 };
 
 export const applyBoundaryConditions = (

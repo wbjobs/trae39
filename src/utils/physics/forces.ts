@@ -1,4 +1,5 @@
-import type { Atom, Bond, Vector3, SimulationParams } from '../../types';
+import type { Atom, Bond, Vector3, SimulationParams, ForceResult } from '../../types';
+import { SpatialHash } from './spatialHash';
 
 const vecSub = (a: Vector3, b: Vector3): Vector3 => [
   a[0] - b[0],
@@ -6,11 +7,11 @@ const vecSub = (a: Vector3, b: Vector3): Vector3 => [
   a[2] - b[2],
 ];
 
-const vecAdd = (a: Vector3, b: Vector3): Vector3 => [
-  a[0] + b[0],
-  a[1] + b[1],
-  a[2] + b[2],
-];
+const vecAddInPlace = (a: Vector3, b: Vector3): void => {
+  a[0] += b[0];
+  a[1] += b[1];
+  a[2] += b[2];
+};
 
 const vecScale = (v: Vector3, s: number): Vector3 => [
   v[0] * s,
@@ -18,13 +19,16 @@ const vecScale = (v: Vector3, s: number): Vector3 => [
   v[2] * s,
 ];
 
-const vecLength = (v: Vector3): number =>
-  Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+const vecLengthSq = (v: Vector3): number =>
+  v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+
+const vecLength = (v: Vector3): number => Math.sqrt(vecLengthSq(v));
 
 const vecNormalize = (v: Vector3): Vector3 => {
   const len = vecLength(v);
   if (len === 0) return [0, 0, 0];
-  return vecScale(v, 1 / len);
+  const invLen = 1 / len;
+  return [v[0] * invLen, v[1] * invLen, v[2] * invLen];
 };
 
 export const calculateSpringForce = (
@@ -57,20 +61,22 @@ export const calculateLJForce = (
   params: SimulationParams,
 ): { force1: Vector3; force2: Vector3; potential: number } => {
   const delta = vecSub(atom2.position, atom1.position);
-  const distance = vecLength(delta);
+  const distSq = vecLengthSq(delta);
 
-  if (distance === 0 || distance > params.cutoffRadius) {
+  if (distSq === 0 || distSq > params.cutoffRadius * params.cutoffRadius) {
     return { force1: [0, 0, 0], force2: [0, 0, 0], potential: 0 };
   }
 
+  const distance = Math.sqrt(distSq);
   const sigmaOverR = params.ljSigma / distance;
-  const sigmaOverR6 = Math.pow(sigmaOverR, 6);
+  const sigmaOverR6 = sigmaOverR * sigmaOverR * sigmaOverR * sigmaOverR * sigmaOverR * sigmaOverR;
   const sigmaOverR12 = sigmaOverR6 * sigmaOverR6;
 
   const forceMagnitude =
     (24 * params.ljEpsilon * (2 * sigmaOverR12 - sigmaOverR6)) / distance;
 
-  const direction = vecNormalize(delta);
+  const invDist = 1 / distance;
+  const direction: Vector3 = [delta[0] * invDist, delta[1] * invDist, delta[2] * invDist];
 
   const force1 = vecScale(direction, forceMagnitude);
   const force2 = vecScale(direction, -forceMagnitude);
@@ -87,24 +93,48 @@ export const calculateDampingForce = (
   return vecScale(atom.velocity, -damping);
 };
 
+const atomIndexMap = new Map<string, number>();
+const bondSet = new Set<string>();
+let spatialHash: SpatialHash | null = null;
+let forcesCache: Vector3[] = [];
+
 export const calculateAllForces = (
   atoms: Atom[],
   bonds: Bond[],
   params: SimulationParams,
-): { forces: Vector3[]; potentialEnergy: number } => {
+  useSpatialHash: boolean = true,
+): ForceResult => {
   const n = atoms.length;
-  const forces: Vector3[] = new Array(n).fill(0).map(() => [0, 0, 0]);
+
+  if (forcesCache.length !== n) {
+    forcesCache = new Array(n);
+    for (let i = 0; i < n; i++) {
+      forcesCache[i] = [0, 0, 0];
+    }
+  } else {
+    for (let i = 0; i < n; i++) {
+      forcesCache[i][0] = 0;
+      forcesCache[i][1] = 0;
+      forcesCache[i][2] = 0;
+    }
+  }
+
   let potentialEnergy = 0;
+  let ljPairCount = 0;
 
-  const atomIndexMap = new Map<string, number>();
-  atoms.forEach((atom, index) => {
-    atomIndexMap.set(atom.id, index);
-  });
+  atomIndexMap.clear();
+  for (let i = 0; i < n; i++) {
+    atomIndexMap.set(atoms[i].id, i);
+  }
 
+  bondSet.clear();
   for (const bond of bonds) {
     const i = atomIndexMap.get(bond.atomId1);
     const j = atomIndexMap.get(bond.atomId2);
     if (i === undefined || j === undefined) continue;
+
+    bondSet.add(`${bond.atomId1}-${bond.atomId2}`);
+    bondSet.add(`${bond.atomId2}-${bond.atomId1}`);
 
     const { force1, force2, potential } = calculateSpringForce(
       atoms[i],
@@ -112,36 +142,64 @@ export const calculateAllForces = (
       bond,
     );
 
-    forces[i] = vecAdd(forces[i], force1);
-    forces[j] = vecAdd(forces[j], force2);
+    vecAddInPlace(forcesCache[i], force1);
+    vecAddInPlace(forcesCache[j], force2);
     potentialEnergy += potential;
   }
 
-  for (let i = 0; i < n; i++) {
-    for (let j = i + 1; j < n; j++) {
-      const hasBond = bonds.some(
-        (b) =>
-          (b.atomId1 === atoms[i].id && b.atomId2 === atoms[j].id) ||
-          (b.atomId1 === atoms[j].id && b.atomId2 === atoms[i].id),
-      );
-      if (hasBond) continue;
+  if (useSpatialHash && n > 50) {
+    if (!spatialHash || spatialHash.getCellSize() !== params.cutoffRadius) {
+      spatialHash = new SpatialHash(params.cutoffRadius);
+    }
+    spatialHash.build(atoms.map((a) => a.position));
+
+    const pairs = spatialHash.getNearbyPairs(params.cutoffRadius);
+
+    for (let p = 0; p < pairs.length; p++) {
+      const [i, j] = pairs[p];
+      const atom1 = atoms[i];
+      const atom2 = atoms[j];
+
+      if (bondSet.has(`${atom1.id}-${atom2.id}`)) continue;
 
       const { force1, force2, potential } = calculateLJForce(
-        atoms[i],
-        atoms[j],
+        atom1,
+        atom2,
         params,
       );
 
-      forces[i] = vecAdd(forces[i], force1);
-      forces[j] = vecAdd(forces[j], force2);
-      potentialEnergy += potential;
+      if (potential !== 0 || force1[0] !== 0 || force1[1] !== 0 || force1[2] !== 0) {
+        vecAddInPlace(forcesCache[i], force1);
+        vecAddInPlace(forcesCache[j], force2);
+        potentialEnergy += potential;
+        ljPairCount++;
+      }
+    }
+  } else {
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        if (bondSet.has(`${atoms[i].id}-${atoms[j].id}`)) continue;
+
+        const { force1, force2, potential } = calculateLJForce(
+          atoms[i],
+          atoms[j],
+          params,
+        );
+
+        if (potential !== 0 || force1[0] !== 0 || force1[1] !== 0 || force1[2] !== 0) {
+          vecAddInPlace(forcesCache[i], force1);
+          vecAddInPlace(forcesCache[j], force2);
+          potentialEnergy += potential;
+          ljPairCount++;
+        }
+      }
     }
   }
 
   for (let i = 0; i < n; i++) {
     const dampingForce = calculateDampingForce(atoms[i], params.damping);
-    forces[i] = vecAdd(forces[i], dampingForce);
+    vecAddInPlace(forcesCache[i], dampingForce);
   }
 
-  return { forces, potentialEnergy };
+  return { forces: forcesCache, potentialEnergy, ljPairCount };
 };

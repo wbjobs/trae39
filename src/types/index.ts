@@ -57,3 +57,9 @@ export interface AtomTypeConfig {
 }
 
 export type Vector3 = [number, number, number];
+
+export interface ForceResult {
+  forces: Vector3[];
+  potentialEnergy: number;
+  ljPairCount: number;
+}

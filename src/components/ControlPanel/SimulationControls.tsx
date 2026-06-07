@@ -136,7 +136,7 @@ export const SimulationControls = () => {
 
             <div>
               <label className="block text-xs text-slate-400 mb-1">
-                阻尼系数: {simulationParams.damping.toFixed(4)}
+                力阻尼系数: {simulationParams.damping.toFixed(4)}
               </label>
               <input
                 type="range"
@@ -149,6 +149,27 @@ export const SimulationControls = () => {
                 }
                 className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
               />
+            </div>
+
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">
+                速度阻尼因子: {simulationParams.velocityDamping.toFixed(4)}
+              </label>
+              <input
+                type="range"
+                min="0.95"
+                max="1.0"
+                step="0.001"
+                value={simulationParams.velocityDamping}
+                onChange={(e) =>
+                  updateSimulationParams({ velocityDamping: parseFloat(e.target.value) })
+                }
+                className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+              />
+              <div className="flex justify-between text-[9px] text-slate-500 mt-0.5">
+                <span>强阻尼 (0.95)</span>
+                <span>无阻尼 (1.0)</span>
+              </div>
             </div>
           </div>
 

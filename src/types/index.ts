@@ -36,6 +36,7 @@ export interface SimulationParams {
   ljSigma: number;
   cutoffRadius: number;
   damping: number;
+  velocityDamping: number;
 }
 
 export interface MoleculeData {

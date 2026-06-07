@@ -1,9 +1,15 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useSimulationStore } from '../store/useSimulationStore';
 import { calculateAllForces } from '../utils/physics/forces';
-import { velocityVerletStep, applyBoundaryConditions } from '../utils/physics/integrator';
+import {
+  velocityVerlet_PositionStep,
+  velocityVerlet_VelocityStep,
+  applyBoundaryConditions,
+  applyDamping,
+  checkAndClampEnergies,
+} from '../utils/physics/integrator';
 import { calculateAllEnergies } from '../utils/physics/energy';
-import type { Vector3 } from '../types';
+import type { Vector3, Atom } from '../types';
 
 export const usePhysics = () => {
   const {
@@ -21,43 +27,72 @@ export const usePhysics = () => {
   const animationFrameRef = useRef<number | null>(null);
   const lastTimeRef = useRef<number>(0);
   const accumulatorRef = useRef<number>(0);
-  const previousForcesRef = useRef<Vector3[]>(atoms.map(() => [0, 0, 0]));
+  const forcesRef = useRef<Vector3[]>(atoms.map(() => [0, 0, 0]));
+  const atomsRef = useRef<Atom[]>(atoms);
+
+  useEffect(() => {
+    atomsRef.current = atoms;
+  }, [atoms]);
 
   const simulationStep = useCallback(
     (dt: number) => {
       if (simulationState.isPaused) return;
 
-      const { forces, potentialEnergy } = calculateAllForces(
-        atoms,
+      const currentAtoms = atomsRef.current;
+      const effectiveDt = dt * simulationState.simulationSpeed;
+
+      const { forces: forces_t, potentialEnergy } = calculateAllForces(
+        currentAtoms,
         bonds,
         simulationParams,
       );
 
-      const effectiveDt = dt * simulationState.simulationSpeed;
+      forcesRef.current = forces_t;
 
-      const { newAtoms } = velocityVerletStep(
-        atoms,
-        forces,
+      const { newPositions, halfStepVelocities } = velocityVerlet_PositionStep(
+        currentAtoms,
+        forces_t,
         effectiveDt,
-        previousForcesRef.current,
       );
 
-      const boundedAtoms = applyBoundaryConditions(newAtoms, {
+      const atomsWithNewPositions: Atom[] = currentAtoms.map((atom, i) => ({
+        ...atom,
+        position: newPositions[i],
+      }));
+
+      const { forces: forces_t_dt } = calculateAllForces(
+        atomsWithNewPositions,
+        bonds,
+        simulationParams,
+      );
+
+      const { newAtoms } = velocityVerlet_VelocityStep(
+        atomsWithNewPositions,
+        halfStepVelocities,
+        forces_t_dt,
+        effectiveDt,
+      );
+
+      let dampedAtoms = applyDamping(newAtoms, simulationParams.velocityDamping);
+
+      dampedAtoms = applyBoundaryConditions(dampedAtoms, {
         min: -10,
         max: 10,
       });
 
+      dampedAtoms = checkAndClampEnergies(dampedAtoms);
+
       const energies = calculateAllEnergies(
-        boundedAtoms,
+        dampedAtoms,
         bonds,
         simulationParams,
       );
 
-      previousForcesRef.current = forces;
+      atomsRef.current = dampedAtoms;
 
-      setAtoms(boundedAtoms);
-      setForces(forces);
-      setPreviousForces(previousForcesRef.current);
+      setAtoms(dampedAtoms);
+      setForces(forces_t_dt);
+      setPreviousForces(forces_t);
       updateEnergies({
         kineticEnergy: energies.kinetic,
         potentialEnergy: energies.potential,
@@ -67,7 +102,6 @@ export const usePhysics = () => {
       incrementTime(effectiveDt);
     },
     [
-      atoms,
       bonds,
       simulationState.isPaused,
       simulationState.simulationSpeed,
@@ -91,7 +125,7 @@ export const usePhysics = () => {
 
       const frameTime = Math.min(
         (currentTime - lastTimeRef.current) / 1000,
-        0.1,
+        0.016,
       );
       lastTimeRef.current = currentTime;
 

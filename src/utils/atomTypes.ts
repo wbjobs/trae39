@@ -61,7 +61,8 @@ export const DEFAULT_SIMULATION_PARAMS = {
   ljEpsilon: 0.15,
   ljSigma: 0.35,
   cutoffRadius: 2.5,
-  damping: 0.001,
+  damping: 0.005,
+  velocityDamping: 0.995,
 };
 
 export const generateId = (): string => {
